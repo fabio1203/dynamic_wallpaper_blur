@@ -1,4 +1,4 @@
-# Dynamic Wallpaper Blur
+# Dynamic Wallpaper Blur on Windows
 
 A Python script for Windows that dynamically blurs your desktop wallpaper when application windows are open, and smoothly unblurs it back to normal when you return to an empty desktop. 
 
