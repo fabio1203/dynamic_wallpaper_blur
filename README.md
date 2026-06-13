@@ -38,6 +38,15 @@ A Python script for Windows that dynamically blurs your desktop wallpaper when a
    * **Step 4:** Click Next, name the shortcut "Dynamic Wallpaper", and click Finish.
    > <img width="704" height="590" alt="Screenshot 2026-06-13 214704" src="https://github.com/user-attachments/assets/9449a497-1318-4012-af2f-02afd5ea6afb" />
 
+## ⚙️ Customization & Example Images
+You can tweak how the blur looks and feels by opening dynamic_wallpaper_blur.pyw in any text editor and changing the variables at the very top:
+
+* BLUR_STRENGTH = 4 (Increase for heavier blur, decrease for lighter blur)
+* FADE_SPEED = 15 (Opacity shift per frame. Higher = faster fade)
+* TIMER_INTERVAL = 15 (Animation frame step interval in milliseconds)
+
+><img width="2559" height="1439" alt="Screenshot 2026-06-13 230105" src="https://github.com/user-attachments/assets/ec6e5dae-5037-4b87-9738-5026f4de78ea" />
+><img width="2559" height="1439" alt="Screenshot 2026-06-13 230211" src="https://github.com/user-attachments/assets/43b1dddf-5932-4f94-b30b-512c3d448cfb" />
 
 
 ## ⚠️ Known Issues
