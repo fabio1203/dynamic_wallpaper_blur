@@ -16,7 +16,7 @@ A Python script for Windows that dynamically blurs your desktop wallpaper when a
 
 2. **Choose a Permanent Location**
    The location of the script doesn't matter, but it **must sit somewhere where it can stay the same forever** without being accidentally moved or deleted. 
-   > 💡 **Recommendation:** Create a folder named `Scripts` on your Desktop (or in your Documents) and place `dynamic_wallpaper_blur.py` inside it.
+   > 💡 **Recommendation:** Create a folder named `Scripts` on your Desktop (or in your Documents) and place `dynamic_wallpaper_blur.pyw` inside it.
 
 3. **Install Dependencies**
    Open your terminal (Command Prompt or PowerShell), navigate to the folder where you saved the script, and run (only needs to be done once):
@@ -32,7 +32,7 @@ A Python script for Windows that dynamically blurs your desktop wallpaper when a
    > <img width="1111" height="925" alt="Screenshot 2026-06-13 214833" src="https://github.com/user-attachments/assets/a5d9a2cb-5920-4536-8a05-8c5cdbc8861e" />
    * **Step 3:** In the location box, type `pythonw.exe` (which runs Python silently) followed by a space, and then the path to your script in quotes. For example:
     ```text
-     pythonw.exe "%USERPROFILE%\Desktop\Scripts\dynamic_wallpaper_blur.py"
+     pythonw.exe "%USERPROFILE%\Desktop\Scripts\dynamic_wallpaper_blur.pyw"
      ```
    > <img width="707" height="590" alt="Screenshot 2026-06-13 214550" src="https://github.com/user-attachments/assets/6558e683-6ba4-4084-8046-a4128c8327b1" />
    * **Step 4:** Click Next, name the shortcut "Dynamic Wallpaper", and click Finish.
