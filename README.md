@@ -21,6 +21,23 @@ Ensure you have [Python 3.x](https://www.python.org/downloads/) installed on you
 The location of the script doesn't matter, but it **must sit somewhere where it can stay the same forever** without being accidentally moved or deleted.
 💡 Recommendation: Create a folder named `Scripts` on your Desktop (or in your Documents) and place `dynamic_wallpaper_blur.py` inside it.
 
-4. Install Dependencies
-Open your terminal (Command Prompt or PowerShell), navigate to the folder where you saved the script, and run:
-pip install -r requirements.txt
+3. Install Dependencies
+Open your terminal (Command Prompt or PowerShell), navigate to the folder where you saved the script, and run (only needs to be done once):
+pip install Pillow pywin32 comtypes
+
+4. 🚀 How to Autostart on Windows Boot (Silently)
+To have this run automatically in the background every time you turn on your PC without leaving an annoying black terminal window open, follow these steps:
+Step 1: Press Win + R on your keyboard to open the Run dialog. Type shell:startup and press Enter. This opens your Windows Startup folder.
+Step 2: Right-click anywhere in the empty space of the Startup folder and select New > Shortcut.
+Step 3: In the location box, type pythonw.exe (which runs Python silently) followed by a space, and then the path to your script in quotes. For example:
+pythonw.exe "C:\Users\%USERPROFILE%\Desktop\Scripts\dynamic_wallpaper_blur.py"
+Step 4: Click Next, name the shortcut "Dynamic Wallpaper", and click Finish.
+Now, the script will silently launch and handle your wallpaper every time you boot up!
+
+## ⚙️ Customization
+You can tweak how the blur looks and feels by opening dynamic_wallpaper_blur.py in any text editor and changing the variables at the very top:
+BLUR_STRENGTH = 4 (Increase for heavier blur, decrease for lighter blur)
+FADE_SPEED = 15 (Opacity shift per frame. Higher = faster fade)
+TIMER_INTERVAL = 15 (Animation frame step interval in milliseconds)
+
+
