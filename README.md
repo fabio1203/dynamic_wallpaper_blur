@@ -7,6 +7,7 @@ A Python script for Windows that dynamically blurs your desktop wallpaper when a
 * **Smooth Animations:** Features fade-in and fade-out transitions between the sharp and blurred states.
 * **Highly Customizable:** Finetune blur strength, fade speed, and animation framerates directly within the script.
 * **Non-Intrusive:** Injects directly into the Windows desktop layer (behind your desktop icons).
+* **Performance Friendly:** Uses pre-rendered blurred wallpaper assets and lightweight alpha blending for minimal CPU/GPU overhead.
 
 ## 🛠️ Installation & Setup
 
