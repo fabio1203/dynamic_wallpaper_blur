@@ -49,6 +49,8 @@ You can tweak how the blur looks and feels by opening dynamic_wallpaper_blur.pyw
 ><img width="2559" height="1439" alt="Screenshot 2026-06-13 230211" src="https://github.com/user-attachments/assets/43b1dddf-5932-4f94-b30b-512c3d448cfb" />
 
 
-## ⚠️ Known Issues
-* **Wallpaper Changes:** The script currently breaks or behaves unpredictably if you change your Windows wallpaper while the script is running. (If you change your wallpaper, simply restart the script).
-* **Misalignment:** Sometimes, the script can cause minor misalignment of the wallpaper when transitioning to the blurred state depending on your Windows scaling and Fit/Fill settings.
+## 📋 Requirements
+* **Windows 10 build 1803 (April 2018 Update) or later.** The script uses Per-Monitor DPI Awareness V2 and mixed-DPI hosting to render the overlay in the same pixel grid as Explorer's wallpaper. Older builds fall back to less accurate DPI modes and may show minor misalignment on scaled displays.
+
+## 🪵 Troubleshooting
+If the overlay ever gets into a weird state (nothing shows, wrong wallpaper, misalignment), check `%TEMP%\dynamic_wallpaper_blur.log`. The script logs startup, wallpaper detection events, sleep/wake rebuilds, and every exception with a full traceback — helpful when running under `pythonw.exe` where there is no console.
