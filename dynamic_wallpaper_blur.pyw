@@ -38,6 +38,10 @@ GA_ROOTOWNER = 3
 HKCU_DESKTOP_KEY = r"Control Panel\Desktop"
 WALLPAPER_REG_VALUE = "Wallpaper"
 WALLPAPER_STYLE_REG_VALUE = "WallpaperStyle"
+WALLPAPER_TILE_REG_VALUE = "TileWallpaper"
+TRANSCODED_WALLPAPER_PATH = os.path.join(
+    os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Themes", "TranscodedWallpaper"
+)
 
 # Custom message for cross-thread reinit signaling
 WM_USER_REINIT = win32con.WM_USER + 1
@@ -68,7 +72,7 @@ monitor_info: list[dict[str, Any]] = []
 window_states: dict[int, dict[str, Any]] = {}
 active_timer_id: int | None = None
 _wallpaper_watcher_running = False
-_last_known_wallpaper_path: str = ""
+_last_known_wallpaper_signature: tuple = ()
 _main_thread_id: int = 0
 _state_lock = threading.RLock()
 
@@ -76,6 +80,27 @@ _state_lock = threading.RLock()
 user32 = ctypes.windll.user32
 user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 user32.DefWindowProcW.restype = ctypes.c_longlong
+
+
+def _enable_dpi_awareness() -> None:
+    # PMv2 makes GetMonitorRECT return physical pixels so the overlay DIB
+    # shares the same pixel grid as Explorer's wallpaper draw — otherwise
+    # DWM upscales the overlay and fades reveal a subpixel halo.
+    user32_local = ctypes.windll.user32
+    try:
+        if user32_local.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except (AttributeError, OSError):
+        pass
+    try:
+        user32_local.SetProcessDPIAware()
+    except (AttributeError, OSError):
+        pass
 
 
 def _get_windows_fill_crop(img_width: int, img_height: int, target_width: int, target_height: int) -> tuple[int, int, int, int]:
@@ -97,50 +122,76 @@ def _get_windows_fill_crop(img_width: int, img_height: int, target_width: int, t
         return (0, top, img_width, top + new_height)
 
 
-def _apply_windows_style(img: Image.Image, width: int, height: int) -> Image.Image:
-    """Apply Windows wallpaper scaling styles to match the actual desktop rendering."""
+def _read_wallpaper_style() -> tuple[int, int]:
+    # Real Windows values: 0=Center/Tile, 2=Stretch, 6=Fit, 10=Fill, 22=Span.
+    # Tile is distinguished from Center by TileWallpaper=1.
+    style = 10
+    tile = 0
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, HKCU_DESKTOP_KEY) as key:
-            style_val, _ = winreg.QueryValueEx(key, WALLPAPER_STYLE_REG_VALUE)
-            style = str(style_val)
-    except Exception:
-        style = "4"  # Default Fill
+            try:
+                v, _ = winreg.QueryValueEx(key, WALLPAPER_STYLE_REG_VALUE)
+                style = int(v)
+            except (OSError, ValueError):
+                pass
+            try:
+                v, _ = winreg.QueryValueEx(key, WALLPAPER_TILE_REG_VALUE)
+                tile = int(v)
+            except (OSError, ValueError):
+                pass
+    except OSError:
+        pass
+    return style, tile
 
-    if style == "0":  # Center
-        bg = Image.new("RGB", (width, height), (0, 0, 0))
-        img.thumbnail((width, height), Image.Resampling.LANCZOS)
-        x = (width - img.width) // 2
-        y = (height - img.height) // 2
-        bg.paste(img, (x, y))
-        return bg
 
-    elif style == "1":  # Tile
+def _apply_windows_style(img: Image.Image, width: int, height: int,
+                         style_override: tuple[int, int] | None = None) -> Image.Image:
+    """Apply Windows wallpaper scaling styles to match the actual desktop rendering."""
+    style, tile = style_override if style_override is not None else _read_wallpaper_style()
+
+    if style == 0 and tile == 1:
         bg = Image.new("RGB", (width, height))
         for y in range(0, height, img.height):
             for x in range(0, width, img.width):
                 bg.paste(img, (x, y))
         return bg
 
-    elif style == "2":  # Stretch
-        return img.resize((width, height), Image.Resampling.LANCZOS)
-
-    elif style == "3":  # Fit
+    if style == 0:
         bg = Image.new("RGB", (width, height), (0, 0, 0))
-        img.thumbnail((width, height), Image.Resampling.LANCZOS)
-        x = (width - img.width) // 2
-        y = (height - img.height) // 2
-        bg.paste(img, (x, y))
+        img_copy = img.copy()
+        img_copy.thumbnail((width, height), Image.Resampling.LANCZOS)
+        x = (width - img_copy.width) // 2
+        y = (height - img_copy.height) // 2
+        bg.paste(img_copy, (x, y))
         return bg
 
-    elif style == "4" or style == "10":  # Fill or Span
-        crop = _get_windows_fill_crop(img.width, img.height, width, height)
-        img_cropped = img.crop(crop)
-        return img_cropped.resize((width, height), Image.Resampling.LANCZOS)
+    if style == 2:
+        return img.resize((width, height), Image.Resampling.LANCZOS)
 
-    else:
-        crop = _get_windows_fill_crop(img.width, img.height, width, height)
-        img_cropped = img.crop(crop)
-        return img_cropped.resize((width, height), Image.Resampling.LANCZOS)
+    if style == 6:
+        bg = Image.new("RGB", (width, height), (0, 0, 0))
+        img_copy = img.copy()
+        img_copy.thumbnail((width, height), Image.Resampling.LANCZOS)
+        x = (width - img_copy.width) // 2
+        y = (height - img_copy.height) // 2
+        bg.paste(img_copy, (x, y))
+        return bg
+
+    # Fill (10) and any unknown value fall through to the modern default.
+    # Span (22) is handled upstream in _generate_dibs and never reaches here.
+    crop = _get_windows_fill_crop(img.width, img.height, width, height)
+    return img.crop(crop).resize((width, height), Image.Resampling.LANCZOS)
+
+
+def _virtual_desktop_rect() -> tuple[int, int, int, int]:
+    """Union rect of every monitor. Handles negative-coordinate secondaries via min/max."""
+    if not monitor_info:
+        return (0, 0, 0, 0)
+    lefts = [m['rect'][0] for m in monitor_info]
+    tops = [m['rect'][1] for m in monitor_info]
+    rights = [m['rect'][2] for m in monitor_info]
+    bottoms = [m['rect'][3] for m in monitor_info]
+    return (min(lefts), min(tops), max(rights), max(bottoms))
 
 
 def _rect_overlap_area(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
@@ -154,11 +205,25 @@ def _rect_overlap_area(a: tuple[int, int, int, int], b: tuple[int, int, int, int
     return (right - left) * (bottom - top)
 
 
-def _generate_dibs(image_path: str, width: int, height: int) -> tuple[Any, Any]:
+def _generate_dibs(image_path: str, width: int, height: int,
+                   span_ctx: tuple[tuple[int, int, int, int],
+                                   tuple[int, int, int, int]] | None = None) -> tuple[Any, Any]:
     """Generate both sharp and blurred DIBs from an image path, matching Windows wallpaper style."""
     with Image.open(image_path) as img:
         img = img.convert("RGB")
-        styled_img = _apply_windows_style(img, width, height)
+        if span_ctx is not None:
+            # Span (WallpaperStyle=22): Windows fill-crops the source against the
+            # virtual desktop rect and shows each monitor a slice of that composite.
+            monitor_rect, virtual_rect = span_ctx
+            vw = virtual_rect[2] - virtual_rect[0]
+            vh = virtual_rect[3] - virtual_rect[1]
+            crop = _get_windows_fill_crop(img.width, img.height, vw, vh)
+            composite = img.crop(crop).resize((vw, vh), Image.Resampling.LANCZOS)
+            sx = monitor_rect[0] - virtual_rect[0]
+            sy = monitor_rect[1] - virtual_rect[1]
+            styled_img = composite.crop((sx, sy, sx + width, sy + height))
+        else:
+            styled_img = _apply_windows_style(img, width, height)
         sharp_dib = ImageWin.Dib(styled_img)
         blurred_img = styled_img.filter(ImageFilter.GaussianBlur(radius=BLUR_STRENGTH))
         blurred_dib = ImageWin.Dib(blurred_img)
@@ -175,17 +240,33 @@ def _get_current_wallpaper_path_from_registry() -> str:
         return ""
 
 
+def _compute_wallpaper_signature() -> tuple:
+    # TranscodedWallpaper mtime catches slideshow rotation and per-monitor
+    # changes that leave the registry Wallpaper string unchanged. Style/Tile
+    # values catch Fit↔Fill or Center↔Tile flips that don't touch the path.
+    path = _get_current_wallpaper_path_from_registry()
+    style, tile = _read_wallpaper_style()
+    mtime = 0.0
+    if TRANSCODED_WALLPAPER_PATH:
+        try:
+            mtime = os.path.getmtime(TRANSCODED_WALLPAPER_PATH)
+        except OSError:
+            mtime = 0.0
+    return (path, style, tile, mtime)
+
+
 def _wallpaper_watcher_thread():
-    """Background thread that polls registry for wallpaper changes."""
-    global _last_known_wallpaper_path
+    """Background thread that polls registry + TranscodedWallpaper mtime for wallpaper changes."""
+    global _last_known_wallpaper_signature
     while _wallpaper_watcher_running:
         try:
-            current_path = _get_current_wallpaper_path_from_registry()
-            if current_path and current_path != _last_known_wallpaper_path:
-                with _state_lock:
-                    _last_known_wallpaper_path = current_path
-                print(f"[-] Registry watcher detected wallpaper change: {current_path}")
-                # Signal main thread to do a full reinit — avoids Win32 threading issues
+            sig = _compute_wallpaper_signature()
+            with _state_lock:
+                changed = sig != _last_known_wallpaper_signature
+                if changed:
+                    _last_known_wallpaper_signature = sig
+            if changed:
+                print("[-] Watcher detected wallpaper/style change; signalling reinit.")
                 if _main_thread_id:
                     user32.PostThreadMessageW(_main_thread_id, WM_USER_REINIT, 0, 0)
         except Exception as e:
@@ -194,13 +275,13 @@ def _wallpaper_watcher_thread():
 
 
 def start_wallpaper_watcher():
-    """Start the background registry polling thread."""
-    global _wallpaper_watcher_running, _last_known_wallpaper_path
+    """Start the background wallpaper-signal polling thread."""
+    global _wallpaper_watcher_running, _last_known_wallpaper_signature
     _wallpaper_watcher_running = True
-    _last_known_wallpaper_path = _get_current_wallpaper_path_from_registry()
+    _last_known_wallpaper_signature = _compute_wallpaper_signature()
     watcher = threading.Thread(target=_wallpaper_watcher_thread, daemon=True)
     watcher.start()
-    print(f"[-] Wallpaper registry watcher started (poll interval: {WALLPAPER_POLL_MS}ms)")
+    print(f"[-] Wallpaper watcher started (poll {WALLPAPER_POLL_MS}ms; tracks path + style + tile + mtime)")
 
 
 def stop_wallpaper_watcher():
@@ -220,6 +301,9 @@ def initialize_wallpapers():
 
     print(f"Detected {count} display(s). Generating assets...")
 
+    # First pass: enumerate monitors and record rects. Span mode needs the
+    # full virtual desktop rect before any DIB can be generated.
+    pending: list[dict[str, Any]] = []
     for i in range(count):
         mon_id = desktop_wallpaper.GetMonitorDevicePathAt(i)  # type: ignore
 
@@ -230,28 +314,50 @@ def initialize_wallpapers():
             continue
 
         rect = desktop_wallpaper.GetMonitorRECT(mon_id)  # type: ignore
-        width = rect.right - rect.left
-        height = rect.bottom - rect.top
+        pending.append({
+            'index': i,
+            'id': mon_id,
+            'rect': (rect.left, rect.top, rect.right, rect.bottom),
+            'wallpaper_path': sharp_path,
+        })
+        monitor_info.append({
+            'id': mon_id,
+            'rect': (rect.left, rect.top, rect.right, rect.bottom),
+            'sharp_dib': None,
+            'blurred_dib': None,
+            'hwnd': None,
+            'wallpaper_path': sharp_path,
+        })
+
+    style, _ = _read_wallpaper_style()
+    virt_rect = _virtual_desktop_rect() if style == 22 else None
+
+    kept: list[dict[str, Any]] = []
+    for p in pending:
+        rect = p['rect']
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        sharp_path = p['wallpaper_path']
 
         sharp_dib = None
         blurred_dib = None
         if os.path.exists(sharp_path):
             try:
-                sharp_dib, blurred_dib = _generate_dibs(sharp_path, width, height)
+                span_ctx = (rect, virt_rect) if virt_rect is not None else None
+                sharp_dib, blurred_dib = _generate_dibs(sharp_path, width, height, span_ctx=span_ctx)
             except Exception as e:
-                print(f"  [!] Monitor {i} skipped: Failed to process image: {e}")
-                continue
+                print(f"  [!] Monitor {p['index']} skipped: Failed to process image: {e}")
 
         if sharp_dib and blurred_dib:
-            monitor_info.append({
-                'id': mon_id,
-                'rect': (rect.left, rect.top, rect.right, rect.bottom),
-                'sharp_dib': sharp_dib,
-                'blurred_dib': blurred_dib,
-                'hwnd': None,
-                'wallpaper_path': sharp_path
-            })
-            print(f"  [-] Monitor {i} pre-rendered ({width}x{height}).")
+            for m in monitor_info:
+                if m['id'] == p['id']:
+                    m['sharp_dib'] = sharp_dib
+                    m['blurred_dib'] = blurred_dib
+                    kept.append(m)
+                    break
+            print(f"  [-] Monitor {p['index']} pre-rendered ({width}x{height}).")
+
+    monitor_info[:] = kept
 
 
 # --- Custom Painting Window Procedure ---
@@ -479,12 +585,18 @@ def reinitialize_overlays():
             except Exception:
                 pass
 
-            if current_path and os.path.exists(current_path) and current_path != minfo['wallpaper_path']:
+            # Rebuild unconditionally when a valid path exists — the watcher only
+            # fires on real changes (path, style, tile, or slideshow rotation),
+            # so we always want to regenerate here even if the path string is
+            # unchanged (e.g. same TranscodedWallpaper cache with new content).
+            if current_path and os.path.exists(current_path):
                 ml, mt, mr, mb = minfo['rect']
                 width = mr - ml
                 height = mb - mt
                 try:
-                    sharp_dib, blurred_dib = _generate_dibs(current_path, width, height)
+                    style, _ = _read_wallpaper_style()
+                    span_ctx = ((ml, mt, mr, mb), _virtual_desktop_rect()) if style == 22 else None
+                    sharp_dib, blurred_dib = _generate_dibs(current_path, width, height, span_ctx=span_ctx)
                     minfo['sharp_dib'] = sharp_dib
                     minfo['blurred_dib'] = blurred_dib
                     minfo['wallpaper_path'] = current_path
@@ -579,7 +691,9 @@ def _hotswap_wallpaper(minfo: dict[str, Any], current_path: str) -> bool:
         return False
 
     try:
-        sharp_dib, blurred_dib = _generate_dibs(current_path, width, height)
+        style, _ = _read_wallpaper_style()
+        span_ctx = ((ml, mt, mr, mb), _virtual_desktop_rect()) if style == 22 else None
+        sharp_dib, blurred_dib = _generate_dibs(current_path, width, height, span_ctx=span_ctx)
     except Exception as e:
         print(f"[!] Hot-swap failed for monitor {minfo['id']}: {e}")
         return False
@@ -692,6 +806,14 @@ def event_callback(hWinEventHook: int, event: int, hwnd: int, idObject: int, idC
 
 
 if __name__ == "__main__":
+    # DPI awareness must be set before any HWND is created or GetMonitorRECT
+    # is called, otherwise Explorer's wallpaper and our overlay end up on
+    # different pixel grids on scaled displays.
+    _enable_dpi_awareness()
+    # Set the main thread id before starting the watcher so its first
+    # PostThreadMessageW cannot miss the target.
+    _main_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+
     initialize_wallpapers()
     if setup_layer_injection():
         evaluate_and_swap()
@@ -711,7 +833,6 @@ if __name__ == "__main__":
         print("\nReal-Time Layered Injection service running. Press Ctrl+C to exit.")
 
         try:
-            _main_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
             msg = wintypes.MSG()
             while user32_local.GetMessageW(ctypes.byref(msg), 0, 0, 0) != 0:
                 if msg.message == WM_USER_REINIT:
